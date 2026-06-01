@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Firebase POS</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    
+    <style>
+        :root { --primary: #00b862; --bg: #f4f6f9; --dark: #2c3e50; --danger: #e74c3c; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        body { display: flex; background: var(--bg); color: #333; height: 100vh; overflow: hidden; }
+        
+        .sidebar { width: 250px; background: white; padding: 20px; border-right: 1px solid #ccc; height: 100%; display: flex; flex-direction: column; overflow-y: auto; }
+        .sidebar h2 { margin-bottom: 20px; text-align: center; color: var(--dark); border-bottom: 2px solid #eee; padding-bottom: 10px; font-size: 18px; }
+        .menu { padding: 12px; margin-bottom: 8px; background: var(--bg); border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.3s; font-size: 14px; }
+        .menu:hover { background: #d5f5e3; }
+        .menu.active { background: var(--primary); color: white; }
+        .refresh-btn { margin-top: auto; padding: 12px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 14px; text-align: center; transition: 0.3s; }
+        
+        .content { flex: 1; padding: 20px; overflow-y: auto; height: 100%; }
+        .section { display: none; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .section.active { display: block; }
+        
+        .form-row { display: flex; gap: 15px; margin-bottom: 15px; align-items: flex-end; flex-wrap: wrap; }
+        .form-group { flex: 1; min-width: 150px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 13px; }
+        input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; outline: none; }
+        input:focus, select:focus { border-color: var(--primary); }
+        .btn { padding: 10px 15px; background: var(--primary); color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.2s; white-space: nowrap; }
+        .btn:hover { opacity: 0.85; }
+        .btn-danger { background: var(--danger); }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: middle; }
+        th { background: var(--dark); color: white; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .prod-img-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 5px; border: 1px solid #ccc; }
+        
+        .widgets { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .widget { padding: 20px; border-radius: 10px; text-align: center; background: white; border: 1px solid #eee; box-shadow: 0 4px 6px rgba(0,0,0,0.04); }
+        .widget h3 { font-size: 13px; color: #666; margin-bottom: 8px; }
+        .widget h2 { font-size: 22px; color: var(--dark); font-weight: 700; }
+        
+        .cash-input-box { margin-top: 10px; display: flex; gap: 5px; justify-content: center; }
+        .cash-input-box input { padding: 5px; font-size: 12px; width: 60%; }
+        .cash-input-box button { padding: 5px 10px; font-size: 12px; background: var(--primary); color: white; border: none; border-radius: 4px; cursor: pointer; }
+        
+        .cat-manager { background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px dashed #cbd5e1; margin-bottom: 20px; }
+        .cat-tag { display: inline-block; background: var(--dark); color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; margin: 3px; }
+        .cat-tag span { cursor: pointer; margin-left: 8px; color: #ff7675; font-weight: bold; }
+        
+        #printArea { display: none; }
+        .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); z-index: 9999; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; color: var(--dark); display: none; }
+
+        @media print {
+            body * { visibility: hidden; }
+            #printArea, #printArea * { visibility: visible; }
+            #printArea { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 20px; }
+            .no-print { display: none !important; }
+            .widgets { display: flex !important; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 20px; }
+            .widget { flex: 1; min-width: 150px; border: 2px solid #000 !important; background: #fff !important; box-shadow: none; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #000; padding: 8px; color: #000; }
+            th { background-color: #eee !important; -webkit-print-color-adjust: exact; color: #000 !important; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">⏳ লোড হচ্ছে...</div>
+
+<div class="sidebar no-print">
+    <h2>🛒 অ্যাডমিন প্যানেল</h2>
+    <div class="menu active" onclick="switchTab('addSection', this)">➕ পণ্য যোগ করুন</div>
+    <div class="menu" onclick="switchTab('inventorySection', this)">📦 স্টক তালিকা</div>
+    <div class="menu" onclick="switchTab('orderSheetSection', this)">🛒 বাজারের তালিকা</div>
+    
+    <h3 style="margin-top:15px; margin-bottom:5px; font-size:11px; color:#7f8c8d; text-transform:uppercase; padding: 0 4px;">রিপোর্ট ও হিসাব</h3>
+    <div class="menu rep-menu" onclick="switchReport('today', this)">📊 আজকের রিপোর্ট</div>
+    <div class="menu rep-menu" onclick="switchReport('monthly', this)">📅 মাসিক রিপোর্ট</div>
+    <div class="menu rep-menu" onclick="switchReport('custom', this)">🔍 তারিখ অনুযায়ী রিপোর্ট</div>
+    
+    <button class="refresh-btn" style="margin-top: 15px;" onclick="window.location.reload()">🔄 পেজ রিলোড</button>
+</div>
+
+<div class="content no-print">
+
+    <!-- পণ্য যোগ করুন -->
+    <div id="addSection" class="section active">
+        <div class="cat-manager">
+            <h3 style="margin-bottom:10px; font-size:14px; color:var(--dark);">🏷️ ক্যাটাগরি তৈরি করুন</h3>
+            <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+                <input type="text" id="newCatInput" placeholder="নতুন ক্যাটাগরির নাম লিখুন..." style="width:250px; flex:1;">
+                <button class="btn" style="background:#2980b9;" onclick="addCategory()">যোগ করুন</button>
+            </div>
+            <div id="catListDisplay"></div>
+        </div>
+
+        <h2>নতুন পণ্য যোগ বা আপডেট করুন</h2><br>
+        <form id="addForm" onsubmit="saveProduct(event)">
+            <div class="form-row">
+                <div class="form-group"><label>পণ্যের নাম *</label><input type="text" id="pName" required placeholder="পণ্যের নাম লিখুন"></div>
+                <div class="form-group"><label>বারকোড (স্ক্যান করুন) *</label><input type="text" id="pBarcode" required placeholder="বারকোড স্ক্যান/লিখুন" oninput="generateBarcodePreview()"></div>
+                <div class="form-group"><label>ক্যাটাগরি</label><select id="pCategory"></select></div>
+            </div>
+            
+            <div id="barcodeArea" style="display:none; text-align:center; padding:15px; border:1px dashed #ccc; margin-bottom:15px; background:#fff; border-radius:8px;">
+                <canvas id="barcodeCanvas"></canvas><br><br>
+                <button type="button" class="btn" style="background:#2980b9;" onclick="downloadBarcode()">💾 ডাউনলোড</button>
+                <button type="button" class="btn" style="background:#34495e;" onclick="printBarcodeOnly()">🖨️ প্রিন্ট</button>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group"><label>ক্রয়মূল্য (৳) *</label><input type="number" id="pBuy" required placeholder="0" min="0"></div>
+                <div class="form-group"><label>বিক্রয়মূল্য (৳) *</label><input type="number" id="pSell" required placeholder="0" min="0"></div>
+                <div class="form-group"><label>ডিসকাউন্ট (%)</label><input type="number" id="pDiscount" value="0" min="0" max="100"></div>
+                <div class="form-group"><label>স্টক পরিমাণ *</label><input type="number" id="pStock" required placeholder="0" min="0"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>পণ্যের ছবি আপলোড করুন</label>
+                    <input type="file" id="pImage" accept="image/*" onchange="handleImageUpload(event)">
+                </div>
+                <div class="form-group" id="imgPreviewBox" style="display:none;">
+                    <label>প্রিভিউ</label>
+                    <img id="imgPreview" src="" style="width:80px; height:80px; object-fit:cover; border-radius:8px; border:1px solid #ccc;">
+                </div>
+            </div>
+            <button type="submit" class="btn" style="padding: 12px 30px; font-size: 15px;">💾 পণ্য সেভ করুন</button>
+            <button type="button" class="btn" style="background:#95a5a6; margin-left:10px;" onclick="clearForm()">❌ ক্লিয়ার</button>
+        </form>
+    </div>
+
+    <!-- স্টক তালিকা -->
+    <div id="inventorySection" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+            <h2>📦 স্টক তালিকা (Inventory)</h2>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <input type="text" id="invSearch" placeholder="🔍 পণ্য খুঁজুন..." style="width:200px;" oninput="renderInventory()">
+                <button class="btn" style="background:#8e44ad;" onclick="printInventory()">🖨️ স্টক প্রিন্ট</button>
+                <button class="btn btn-danger" onclick="deleteAllProducts()">🗑️ সকল ডিলিট</button>
+            </div>
+        </div>
+        <div id="invCount" style="font-size:13px; color:#666; margin-bottom:10px;"></div>
+        <table id="invTableHtml">
+            <thead>
+                <tr>
+                    <th>ছবি</th>
+                    <th>ক্যাটাগরি</th>
+                    <th>বারকোড</th>
+                    <th>নাম</th>
+                    <th>ক্রয়মূল্য</th>
+                    <th>বিক্রয়মূল্য</th>
+                    <th>ডিস্কাউন্ট</th>
+                    <th>স্টক</th>
+                    <th>বিক্রি</th>
+                    <th class="no-print">অ্যাকশন</th>
+                </tr>
+            </thead>
+            <tbody id="inventoryTable"></tbody>
+        </table>
+    </div>
+
+    <!-- বাজারের তালিকা -->
+    <div id="orderSheetSection" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <h2>🛒 বাজারের তালিকা (Order Sheet)</h2>
+            <button class="btn" onclick="printMarketList()">🖨️ শিট প্রিন্ট করুন</button>
+        </div><br>
+        <div class="form-row">
+            <div class="form-group"><label>পণ্যের নাম</label><input type="text" id="mItem" placeholder="পণ্যের নাম লিখুন"></div>
+            <div class="form-group"><label>পরিমাণ</label><input type="text" id="mQty" placeholder="পরিমাণ লিখুন"></div>
+            <div class="form-group" style="display:flex; align-items:flex-end;">
+                <button class="btn" onclick="addToMarketList()" style="width:100%;">➕ লিস্টে যোগ করুন</button>
+            </div>
+        </div>
+        <table>
+            <thead><tr><th>#</th><th>পণ্যের নাম</th><th>পরিমাণ</th><th class="no-print">অ্যাকশন</th></tr></thead>
+            <tbody id="marketListTable"></tbody>
+        </table>
+        <button class="btn btn-danger" style="margin-top:15px;" onclick="clearMarketList()">🗑️ পুরো তালিকা মুছুন</button>
+    </div>
+
+    <!-- রিপোর্ট -->
+    <div id="reportSection" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+            <h2 id="reportTitle">📊 রিপোর্ট ড্যাশবোর্ড</h2>
+            <div class="no-print" style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button class="btn btn-danger" onclick="deleteAllReports()">🗑️ ডেটা ডিলিট</button>
+                <button class="btn" style="background:#27ae60;" onclick="downloadCSV()">📥 এক্সেল ডাউনলোড</button>
+                <button class="btn" onclick="printReport()">🖨️ প্রিন্ট করুন</button>
+            </div>
+        </div>
+
+        <div id="customDateFilter" class="no-print" style="display:none; margin-bottom:20px; background:#eaf2f8; padding:15px; border-radius:8px;">
+            <span style="font-weight:bold; margin-right:10px;">📅 তারিখ সিলেক্ট করুন:</span>
+            <input type="date" id="customDate" style="width:auto; padding:8px;" onchange="loadReport('custom')">
+        </div>
+
+        <div class="widgets" id="dashboardWidgets">
+            <div class="widget" style="background:#fef9e7; border-color:#fcf3cf;">
+                <h3>ওপেনিং ক্যাশ</h3>
+                <h2 id="repOpening" style="color:#d35400;">৳0</h2>
+                <div class="cash-input-box no-print">
+                    <input type="number" id="manualOpenCash" placeholder="টাকা">
+                    <button onclick="setManualCash('opening')">সেট</button>
+                </div>
+            </div>
+            <div class="widget" style="background:#fdfefe; border-color:#e0e0e0;">
+                <h3>ক্লোজিং ক্যাশ</h3>
+                <h2 id="repClosing" style="color:#7f8c8d;">৳0</h2>
+                <div class="cash-input-box no-print">
+                    <input type="number" id="manualCloseCash" placeholder="টাকা">
+                    <button onclick="setManualCash('closing')">সেট</button>
+                </div>
+            </div>
+            <div class="widget" style="background:#fdfefe; border-color:#e0e0e0;">
+                <h3>মোট ক্রয়মূল্য (Cost)</h3>
+                <h2 id="repCost">৳0</h2>
+            </div>
+            <div class="widget" style="background:#e8f8f5; border-color:#d1f2eb;">
+                <h3>মোট বিক্রয় (Sales)</h3>
+                <h2 id="repSales" style="color:var(--primary);">৳0</h2>
+            </div>
+            <div class="widget" style="background:#eaf2f8; border-color:#d4e6f1;">
+                <h3>মোট লাভ (Profit)</h3>
+                <h2 id="repProfit" style="color:#2980b9;">৳0</h2>
+            </div>
+            <div class="widget" style="background:#f5eef8; border-color:#e8d5f5;">
+                <h3>শতকরা লাভ (Margin)</h3>
+                <h2 id="repMargin" style="color:#8e44ad;">0%</h2>
+            </div>
+        </div>
+
+        <div style="margin-top:25px;">
+            <h3 style="border-bottom:2px solid #ccc; padding-bottom:8px; margin-bottom:0;">📅 তারিখ অনুযায়ী বিক্রয় ও লাভ</h3>
+            <table>
+                <thead><tr><th>তারিখ</th><th>মোট বিক্রি (পিস)</th><th>মোট ক্রয়মূল্য (৳)</th><th>মোট বিক্রয়মূল্য (৳)</th><th>মোট লাভ (৳)</th></tr></thead>
+                <tbody id="dateSummaryTable"></tbody>
+            </table>
+        </div>
+
+        <div style="margin-top:25px;">
+            <h3 style="border-bottom:2px solid #ccc; padding-bottom:8px; margin-bottom:0;">🏷️ ক্যাটাগরি অনুযায়ী সেলস</h3>
+            <table>
+                <thead><tr><th>ক্যাটাগরি</th><th>পরিমাণ (পিস)</th><th>মোট বিক্রি (৳)</th></tr></thead>
+                <tbody id="catSalesTable"></tbody>
+            </table>
+        </div>
+
+        <div style="margin-top:25px;">
+            <h3 style="border-bottom:2px solid #ccc; padding-bottom:8px; margin-bottom:0;">📋 বিস্তারিত বিক্রির তালিকা (Itemized)</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>তারিখ</th>
+                        <th>সময়</th>
+                        <th>পণ্যের নাম</th>
+                        <th>ক্যাটাগরি</th>
+                        <th>পরিমাণ</th>
+                        <th>মোট ক্রয়মূল্য</th>
+                        <th>মোট বিক্রয়মূল্য</th>
+                        <th>লাভ (৳)</th>
+                    </tr>
+                </thead>
+                <tbody id="itemizedTable"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- প্রিন্ট এরিয়া -->
+<div id="printArea"></div>
+<iframe id="barcodeFrame" style="display:none;"></iframe>
+
+<script>
+// ===== Firebase Configuration =====
+const firebaseConfig = {
+    apiKey: "AIzaSyCNs3RtfnzdcIZKts6lumG6kc27wri1Wm8",
+    authDomain: "bangladesh-ff66b.firebaseapp.com",
+    databaseURL: "https://bangladesh-ff66b-default-rtdb.firebaseio.com",
+    projectId: "bangladesh-ff66b",
+    storageBucket: "bangladesh-ff66b.firebasestorage.app",
+    messagingSenderId: "798650126943",
+    appId: "1:798650126943:web:c0e75008426774eef481ea"
+};
+
+if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+const db = firebase.firestore();
+
+// ===== Local State =====
+let products = [];
+let orders = [];
+let marketList = [];
+let shifts = {};
+let categories = ['Grocery', 'Food', 'Electronics'];
+let uploadedImageBase64 = "";
+let currentReportType = 'today';
+let currentFilteredOrders = [];
+
+// ===== Real-time Listeners =====
+db.collection("settings").doc("categories").onSnapshot((doc) => {
+    if (doc.exists) { categories = doc.data().items || []; }
+    renderCategories();
+});
+
+db.collection("settings").doc("marketList").onSnapshot((doc) => {
+    if (doc.exists) { marketList = doc.data().items || []; }
+    if (document.getElementById('orderSheetSection').classList.contains('active')) renderMarketList();
+});
+
+db.collection("products").onSnapshot((snapshot) => {
+    products = [];
+    snapshot.forEach(doc => products.push({ id: doc.id, ...doc.data() }));
+    if (document.getElementById('inventorySection').classList.contains('active')) renderInventory();
+});
+
+db.collection("orders").onSnapshot((snapshot) => {
+    orders = [];
+    snapshot.forEach(doc => orders.push({ id: doc.id, ...doc.data() }));
+    if (document.getElementById('reportSection').classList.contains('active')) loadReport(currentReportType);
+});
+
+db.collection("shifts").onSnapshot((snapshot) => {
+    shifts = {};
+    snapshot.forEach(doc => { shifts[doc.id] = doc.data(); });
+    if (document.getElementById('reportSection').classList.contains('active')) loadReport(currentReportType);
+});
+
+// ===== UI Navigation =====
+function switchTab(tabId, btn) {
+    document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.menu').forEach(el => el.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (tabId === 'inventorySection') renderInventory();
+    if (tabId === 'orderSheetSection') renderMarketList();
+}
+
+function switchReport(type, btn) {
+    switchTab('reportSection', null);
+    document.querySelectorAll('.menu').forEach(el => el.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    currentReportType = type;
+    document.getElementById('customDateFilter').style.display = (type === 'custom') ? 'block' : 'none';
+    loadReport(type);
+}
+
+// ===== Categories =====
+function renderCategories() {
+    const catSelect = document.getElementById('pCategory');
+    const catDisplay = document.getElementById('catListDisplay');
+    if (!catSelect || !catDisplay) return;
+
+    catSelect.innerHTML = `<option value="None">-- কোনো ক্যাটাগরি নেই --</option>`;
+    categories.forEach(c => {
+        catSelect.innerHTML += `<option value="${c}">${c}</option>`;
+    });
+
+    catDisplay.innerHTML = '';
+    categories.forEach((c, index) => {
+        catDisplay.innerHTML += `<div class="cat-tag">${c} <span onclick="deleteCategory(${index})">✕</span></div>`;
+    });
+}
+
+function addCategory() {
+    const newCat = document.getElementById('newCatInput').value.trim();
+    if (newCat && !categories.includes(newCat)) {
+        categories.push(newCat);
+        db.collection("settings").doc("categories").set({ items: categories });
+        document.getElementById('newCatInput').value = '';
+    } else if (categories.includes(newCat)) {
+        alert('এই ক্যাটাগরি ইতিমধ্যে আছে!');
+    }
+}
+
+function deleteCategory(index) {
+    if (confirm("ক্যাটাগরিটি মুছে ফেলতে চান?")) {
+        categories.splice(index, 1);
+        db.collection("settings").doc("categories").set({ items: categories });
+    }
+}
+
+// ===== Image Handling =====
+function handleImageUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        uploadedImageBase64 = e.target.result;
+        document.getElementById('imgPreview').src = uploadedImageBase64;
+        document.getElementById('imgPreviewBox').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+}
+
+// ===== Barcode =====
+function generateBarcodePreview() {
+    const val = document.getElementById('pBarcode').value.trim();
+    const area = document.getElementById('barcodeArea');
+    if (val.length >= 4) {
+        area.style.display = 'block';
+        try {
+            JsBarcode("#barcodeCanvas", val, { format: "CODE128", width: 2, height: 60, displayValue: true });
+        } catch(e) { area.style.display = 'none'; }
+    } else {
+        area.style.display = 'none';
+    }
+}
+
+function downloadBarcode() {
+    const canvas = document.getElementById('barcodeCanvas');
+    const link = document.createElement('a');
+    link.download = `barcode_${document.getElementById('pBarcode').value}.png`;
+    link.href = canvas.toDataURL();
+    link.click();
+}
+
+function printBarcodeOnly() {
+    const canvas = document.getElementById('barcodeCanvas');
+    const dataUrl = canvas.toDataURL();
+    const frame = document.getElementById('barcodeFrame');
+    frame.style.display = 'block';
+    frame.contentDocument.write(`
+        <html><body style="text-align:center; margin:20px;">
+        <img src="${dataUrl}" style="max-width:100%;">
+        <p style="font-size:14px; margin-top:10px;">${document.getElementById('pBarcode').value}</p>
+        <script>window.onload=()=>{window.print();window.onafterprint=()=>{window.close();}}<\/script>
+        </body></html>`);
+    frame.contentDocument.close();
+}
+
+// ===== Save Product =====
+function saveProduct(e) {
+    e.preventDefault();
+    const barcode = document.getElementById('pBarcode').value.trim();
+    const name = document.getElementById('pName').value.trim();
+    const category = document.getElementById('pCategory').value;
+    const buyPrice = parseFloat(document.getElementById('pBuy').value) || 0;
+    const sellPrice = parseFloat(document.getElementById('pSell').value) || 0;
+    const discount = parseFloat(document.getElementById('pDiscount').value) || 0;
+    const stock = parseInt(document.getElementById('pStock').value) || 0;
+
+    if (!barcode || !name) { alert('পণ্যের নাম ও বারকোড আবশ্যক!'); return; }
+
+    const productData = {
+        barcode,
+        name,
+        category,
+        buyPrice,
+        sellPrice,
+        discount,
+        stock,
+        sold: 0,
+        image: uploadedImageBase64,
+        updatedAt: new Date().toISOString()
+    };
+
+    // Check if existing
+    const existing = products.find(p => p.barcode === barcode);
+    if (existing) {
+        productData.sold = existing.sold || 0;
+        if (!uploadedImageBase64 && existing.image) productData.image = existing.image;
+    }
+
+    db.collection("products").doc(barcode).set(productData)
+        .then(() => {
+            alert('✅ পণ্য সফলভাবে সেভ হয়েছে!');
+            clearForm();
+        })
+        .catch(err => alert('❌ সেভ করতে সমস্যা হয়েছে: ' + err.message));
+}
+
+function clearForm() {
+    document.getElementById('addForm').reset();
+    document.getElementById('pDiscount').value = '0';
+    uploadedImageBase64 = "";
+    document.getElementById('barcodeArea').style.display = 'none';
+    document.getElementById('imgPreviewBox').style.display = 'none';
+    document.getElementById('imgPreview').src = '';
+}
+
+// ===== Inventory =====
+function renderInventory() {
+    const tbody = document.getElementById('inventoryTable');
+    const searchVal = (document.getElementById('invSearch')?.value || '').toLowerCase();
+    if (!tbody) return;
+
+    let filtered = products.filter(p =>
+        p.name?.toLowerCase().includes(searchVal) ||
+        p.barcode?.toLowerCase().includes(searchVal) ||
+        p.category?.toLowerCase().includes(searchVal)
+    );
+
+    document.getElementById('invCount').textContent = `মোট পণ্য: ${filtered.length} টি`;
+    tbody.innerHTML = '';
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:#999; padding:20px;">কোনো পণ্য পাওয়া যায়নি</td></tr>';
+        return;
+    }
+
+    filtered.sort((a, b) => (a.name || '').localeCompare(b.name || '')).forEach(p => {
+        const imgHtml = p.image
+            ? `<img src="${p.image}" class="prod-img-thumb" alt="${p.name}">`
+            : `<div style="width:40px;height:40px;background:#eee;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:18px;">📦</div>`;
+
+        const stockColor = p.stock <= 5 ? 'color:red; font-weight:bold;' : '';
+
+        tbody.innerHTML += `
+        <tr>
+            <td>${imgHtml}</td>
+            <td>${p.category || 'N/A'}</td>
+            <td style="font-size:12px;">${p.barcode}</td>
+            <td><strong>${p.name}</strong></td>
+            <td>৳${(p.buyPrice || 0).toFixed(2)}</td>
+            <td>৳${(p.sellPrice || 0).toFixed(2)}</td>
+            <td>${p.discount || 0}%</td>
+            <td style="${stockColor}">${p.stock || 0}</td>
+            <td>${p.sold || 0}</td>
+            <td class="no-print" style="white-space:nowrap;">
+                <button class="btn" style="font-size:12px; padding:5px 8px; background:#f39c12;" onclick="editProduct('${p.barcode}')">✏️ এডিট</button>
+                <button class="btn btn-danger" style="font-size:12px; padding:5px 8px;" onclick="deleteProduct('${p.barcode}', '${p.name}')">🗑️</button>
+            </td>
+        </tr>`;
+    });
+}
+
+function editProduct(barcode) {
+    const p = products.find(x => x.barcode === barcode);
+    if (!p) return;
+    switchTab('addSection', document.querySelector('.menu'));
+    document.getElementById('pName').value = p.name || '';
+    document.getElementById('pBarcode').value = p.barcode || '';
+    document.getElementById('pBuy').value = p.buyPrice || 0;
+    document.getElementById('pSell').value = p.sellPrice || 0;
+    document.getElementById('pDiscount').value = p.discount || 0;
+    document.getElementById('pStock').value = p.stock || 0;
+    if (p.category) {
+        const sel = document.getElementById('pCategory');
+        for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === p.category) { sel.selectedIndex = i; break; }
+        }
+    }
+    if (p.image) {
+        uploadedImageBase64 = p.image;
+        document.getElementById('imgPreview').src = p.image;
+        document.getElementById('imgPreviewBox').style.display = 'block';
+    }
+    generateBarcodePreview();
+    window.scrollTo(0, 0);
+}
+
+function deleteProduct(barcode, name) {
+    if (confirm(`"${name}" পণ্যটি ডিলিট করতে চান?`)) {
+        db.collection("products").doc(barcode).delete()
+            .then(() => alert('✅ পণ্য ডিলিট হয়েছে।'))
+            .catch(err => alert('❌ ডিলিট করতে সমস্যা: ' + err.message));
+    }
+}
+
+function deleteAllProducts() {
+    if (confirm('⚠️ সত্যিই সকল পণ্য ডিলিট করতে চান? এটি পূর্বাবস্থায় ফেরানো যাবে না!')) {
+        const batch = db.batch();
+        products.forEach(p => {
+            batch.delete(db.collection("products").doc(p.barcode || p.id));
+        });
+        batch.commit().then(() => alert('✅ সকল পণ্য ডিলিট হয়েছে।'));
+    }
+}
+
+// ===== Print Inventory =====
+function printInventory() {
+    const printContent = `
+    <div style="font-family: 'Segoe UI', sans-serif; padding: 20px;">
+        <div style="text-align:center; margin-bottom:20px; border-bottom: 2px solid #000; padding-bottom:15px;">
+            <h1 style="font-size:20px; margin-bottom:5px;">📦 স্টক তালিকা (Inventory Report)</h1>
+            <p style="font-size:13px; color:#555;">প্রিন্ট তারিখ: ${new Date().toLocaleString('bn-BD')}</p>
+            <p style="font-size:13px;">মোট পণ্য: ${products.length} টি</p>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead>
+                <tr style="background:#eee;">
+                    <th style="border:1px solid #000; padding:8px;">ক্যাটাগরি</th>
+                    <th style="border:1px solid #000; padding:8px;">বারকোড</th>
+                    <th style="border:1px solid #000; padding:8px;">নাম</th>
+                    <th style="border:1px solid #000; padding:8px;">ক্রয়মূল্য</th>
+                    <th style="border:1px solid #000; padding:8px;">বিক্রয়মূল্য</th>
+                    <th style="border:1px solid #000; padding:8px;">স্টক</th>
+                    <th style="border:1px solid #000; padding:8px;">বিক্রি</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${products.sort((a,b) => (a.category||'').localeCompare(b.category||'')).map(p => `
+                <tr>
+                    <td style="border:1px solid #000; padding:7px;">${p.category || 'N/A'}</td>
+                    <td style="border:1px solid #000; padding:7px; font-size:11px;">${p.barcode}</td>
+                    <td style="border:1px solid #000; padding:7px; font-weight:bold;">${p.name}</td>
+                    <td style="border:1px solid #000; padding:7px;">৳${(p.buyPrice||0).toFixed(2)}</td>
+                    <td style="border:1px solid #000; padding:7px;">৳${(p.sellPrice||0).toFixed(2)}</td>
+                    <td style="border:1px solid #000; padding:7px; ${p.stock<=5?'color:red;font-weight:bold;':''}">${p.stock||0}</td>
+                    <td style="border:1px solid #000; padding:7px;">${p.sold||0}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+        <div style="margin-top:15px; font-size:13px; border-top:1px solid #ccc; padding-top:10px;">
+            <strong>মোট স্টক মূল্য: ৳${products.reduce((s,p) => s + ((p.buyPrice||0)*(p.stock||0)), 0).toFixed(2)}</strong>
+        </div>
+    </div>`;
+    document.getElementById('printArea').innerHTML = printContent;
+    window.print();
+}
+
+// ===== Market List =====
+function renderMarketList() {
+    const tbody = document.getElementById('marketListTable');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (marketList.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#999; padding:15px;">তালিকা খালি</td></tr>';
+        return;
+    }
+    marketList.forEach((item, index) => {
+        tbody.innerHTML += `
+        <tr>
+            <td>${index + 1}</td>
+            <td>${item.name}</td>
+            <td>${item.qty}</td>
+            <td class="no-print">
+                <button class="btn btn-danger" style="font-size:12px; padding:5px 8px;" onclick="removeFromMarketList(${index})">🗑️</button>
+            </td>
+        </tr>`;
+    });
+}
+
+function addToMarketList() {
+    const item = document.getElementById('mItem').value.trim();
+    const qty = document.getElementById('mQty').value.trim();
+    if (!item) { alert('পণ্যের নাম লিখুন!'); return; }
+    marketList.push({ name: item, qty: qty || '১টি' });
+    db.collection("settings").doc("marketList").set({ items: marketList });
+    document.getElementById('mItem').value = '';
+    document.getElementById('mQty').value = '';
+}
+
+function removeFromMarketList(index) {
+    marketList.splice(index, 1);
+    db.collection("settings").doc("marketList").set({ items: marketList });
+}
+
+function clearMarketList() {
+    if (confirm('বাজারের পুরো তালিকা মুছে ফেলতে চান?')) {
+        marketList = [];
+        db.collection("settings").doc("marketList").set({ items: [] });
+    }
+}
+
+function printMarketList() {
+    const printContent = `
+    <div style="font-family:'Segoe UI',sans-serif; padding:20px; max-width:400px; margin:0 auto;">
+        <h2 style="text-align:center; border-bottom:2px solid #000; padding-bottom:10px;">🛒 বাজারের তালিকা</h2>
+        <p style="text-align:center; font-size:13px; margin-bottom:15px;">${new Date().toLocaleDateString('bn-BD')}</p>
+        <table style="width:100%; border-collapse:collapse;">
+            <thead><tr>
+                <th style="border:1px solid #000; padding:8px; text-align:left;">#</th>
+                <th style="border:1px solid #000; padding:8px; text-align:left;">পণ্যের নাম</th>
+                <th style="border:1px solid #000; padding:8px; text-align:left;">পরিমাণ</th>
+            </tr></thead>
+            <tbody>
+                ${marketList.map((item, i) => `
+                <tr>
+                    <td style="border:1px solid #000; padding:8px;">${i+1}</td>
+                    <td style="border:1px solid #000; padding:8px;">${item.name}</td>
+                    <td style="border:1px solid #000; padding:8px;">${item.qty}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+    </div>`;
+    document.getElementById('printArea').innerHTML = printContent;
+    window.print();
+}
+
+// ===== Report =====
+function getDateKey(dateStr) {
+    return dateStr ? dateStr.substring(0, 10) : '';
+}
+
+function loadReport(type) {
+    currentReportType = type;
+    const titles = { today: '📊 আজকের রিপোর্ট', monthly: '📅 মাসিক রিপোর্ট', custom: '🔍 কাস্টম রিপোর্ট' };
+    document.getElementById('reportTitle').textContent = titles[type] || '📊 রিপোর্ট';
+
+    const now = new Date();
+    const todayKey = now.toISOString().substring(0, 10);
+    const monthKey = now.toISOString().substring(0, 7);
+
+    let filtered = [];
+    if (type === 'today') {
+        filtered = orders.filter(o => getDateKey(o.date) === todayKey);
+    } else if (type === 'monthly') {
+        filtered = orders.filter(o => getDateKey(o.date)?.substring(0, 7) === monthKey);
+    } else if (type === 'custom') {
+        const customDate = document.getElementById('customDate')?.value;
+        if (!customDate) { filtered = []; }
+        else { filtered = orders.filter(o => getDateKey(o.date) === customDate); }
+    }
+    currentFilteredOrders = filtered;
+
+    // Calculate totals
+    let totalCost = 0, totalSales = 0;
+    filtered.forEach(order => {
+        if (order.items) {
+            order.items.forEach(item => {
+                totalCost += (item.buyPrice || 0) * (item.qty || 1);
+                totalSales += (item.totalPrice || (item.sellPrice * item.qty)) || 0;
+            });
+        }
+    });
+
+    const totalProfit = totalSales - totalCost;
+    const margin = totalSales > 0 ? ((totalProfit / totalSales) * 100).toFixed(1) : 0;
+
+    document.getElementById('repCost').textContent = `৳${totalCost.toFixed(2)}`;
+    document.getElementById('repSales').textContent = `৳${totalSales.toFixed(2)}`;
+    document.getElementById('repProfit').textContent = `৳${totalProfit.toFixed(2)}`;
+    document.getElementById('repMargin').textContent = `${margin}%`;
+
+    // Shifts
+    const shiftKey = type === 'today' ? todayKey : (type === 'monthly' ? monthKey : (document.getElementById('customDate')?.value || todayKey));
+    const shiftData = shifts[shiftKey] || {};
+    document.getElementById('repOpening').textContent = `৳${shiftData.opening || 0}`;
+    document.getElementById('repClosing').textContent = `৳${shiftData.closing || 0}`;
+
+    // Date summary table
+    const dateSummaryBody = document.getElementById('dateSummaryTable');
+    const dateMap = {};
+    filtered.forEach(order => {
+        const dk = getDateKey(order.date);
+        if (!dateMap[dk]) dateMap[dk] = { qty: 0, cost: 0, sales: 0 };
+        if (order.items) {
+            order.items.forEach(item => {
+                dateMap[dk].qty += item.qty || 1;
+                dateMap[dk].cost += (item.buyPrice || 0) * (item.qty || 1);
+                dateMap[dk].sales += item.totalPrice || 0;
+            });
+        }
+    });
+    dateSummaryBody.innerHTML = '';
+    if (Object.keys(dateMap).length === 0) {
+        dateSummaryBody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999; padding:15px;">কোনো ডেটা নেই</td></tr>';
+    } else {
+        Object.entries(dateMap).sort((a,b)=>b[0].localeCompare(a[0])).forEach(([date, data]) => {
+            const profit = data.sales - data.cost;
+            dateSummaryBody.innerHTML += `
+            <tr>
+                <td>${date}</td>
+                <td>${data.qty}</td>
+                <td>৳${data.cost.toFixed(2)}</td>
+                <td>৳${data.sales.toFixed(2)}</td>
+                <td style="color:${profit >= 0 ? '#27ae60' : '#e74c3c'};">৳${profit.toFixed(2)}</td>
+            </tr>`;
+        });
+    }
+
+    // Category summary
+    const catSalesBody = document.getElementById('catSalesTable');
+    const catMap = {};
+    filtered.forEach(order => {
+        if (order.items) {
+            order.items.forEach(item => {
+                const cat = item.category || 'অন্যান্য';
+                if (!catMap[cat]) catMap[cat] = { qty: 0, sales: 0 };
+                catMap[cat].qty += item.qty || 1;
+                catMap[cat].sales += item.totalPrice || 0;
+            });
+        }
+    });
+    catSalesBody.innerHTML = '';
+    if (Object.keys(catMap).length === 0) {
+        catSalesBody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#999; padding:15px;">কোনো ডেটা নেই</td></tr>';
+    } else {
+        Object.entries(catMap).sort((a,b)=>b[1].sales-a[1].sales).forEach(([cat, data]) => {
+            catSalesBody.innerHTML += `
+            <tr>
+                <td>${cat}</td>
+                <td>${data.qty}</td>
+                <td>৳${data.sales.toFixed(2)}</td>
+            </tr>`;
+        });
+    }
+
+    // Itemized table
+    const itemizedBody = document.getElementById('itemizedTable');
+    itemizedBody.innerHTML = '';
+    const allItems = [];
+    filtered.forEach(order => {
+        if (order.items) {
+            order.items.forEach(item => {
+                allItems.push({
+                    date: getDateKey(order.date),
+                    time: order.date ? new Date(order.date).toLocaleTimeString('bn-BD', {hour:'2-digit', minute:'2-digit'}) : '',
+                    name: item.name || '',
+                    category: item.category || 'অন্যান্য',
+                    qty: item.qty || 1,
+                    cost: (item.buyPrice || 0) * (item.qty || 1),
+                    sales: item.totalPrice || 0,
+                    profit: (item.totalPrice || 0) - ((item.buyPrice || 0) * (item.qty || 1))
+                });
+            });
+        }
+    });
+    if (allItems.length === 0) {
+        itemizedBody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#999; padding:15px;">কোনো ডেটা নেই</td></tr>';
+    } else {
+        allItems.reverse().forEach(item => {
+            itemizedBody.innerHTML += `
+            <tr>
+                <td>${item.date}</td>
+                <td>${item.time}</td>
+                <td>${item.name}</td>
+                <td>${item.category}</td>
+                <td>${item.qty}</td>
+                <td>৳${item.cost.toFixed(2)}</td>
+                <td>৳${item.sales.toFixed(2)}</td>
+                <td style="color:${item.profit>=0?'#27ae60':'#e74c3c'};">৳${item.profit.toFixed(2)}</td>
+            </tr>`;
+        });
+    }
+}
+
+// ===== Manual Cash =====
+function setManualCash(type) {
+    const inputId = type === 'opening' ? 'manualOpenCash' : 'manualCloseCash';
+    const val = parseFloat(document.getElementById(inputId).value);
+    if (isNaN(val)) { alert('সঠিক পরিমাণ লিখুন!'); return; }
+
+    const now = new Date();
+    const key = currentReportType === 'today'
+        ? now.toISOString().substring(0, 10)
+        : (currentReportType === 'monthly'
+            ? now.toISOString().substring(0, 7)
+            : (document.getElementById('customDate')?.value || now.toISOString().substring(0, 10)));
+
+    const update = {};
+    update[type] = val;
+    db.collection("shifts").doc(key).set(update, { merge: true })
+        .then(() => {
+            document.getElementById(inputId).value = '';
+            alert(`✅ ${type === 'opening' ? 'ওপেনিং' : 'ক্লোজিং'} ক্যাশ সেট হয়েছে।`);
+        });
+}
+
+// ===== Delete Reports =====
+function deleteAllReports() {
+    if (!confirm('⚠️ সকল রিপোর্ট ডেটা মুছে ফেলতে চান?')) return;
+    const batch = db.batch();
+    orders.forEach(o => batch.delete(db.collection("orders").doc(o.id)));
+    batch.commit().then(() => alert('✅ সকল রিপোর্ট ডিলিট হয়েছে।'));
+}
+
+// ===== Print Report =====
+function printReport() {
+    const reportHtml = document.getElementById('reportSection').innerHTML;
+    document.getElementById('printArea').innerHTML = `
+    <div style="font-family:'Segoe UI',sans-serif;">
+        <div style="text-align:center; border-bottom:2px solid #000; padding-bottom:15px; margin-bottom:20px;">
+            <h1 style="font-size:20px;">${document.getElementById('reportTitle').textContent}</h1>
+            <p>প্রিন্ট তারিখ: ${new Date().toLocaleString('bn-BD')}</p>
+        </div>
+        ${reportHtml}
+    </div>`;
+    window.print();
+}
+
+// ===== CSV Download =====
+function downloadCSV() {
+    if (currentFilteredOrders.length === 0) { alert('কোনো ডেটা নেই!'); return; }
+    
+    let csv = '\uFEFF'; // BOM for Bengali support
+    csv += 'তারিখ,পণ্যের নাম,ক্যাটাগরি,পরিমাণ,ক্রয়মূল্য,বিক্রয়মূল্য,লাভ\n';
+
+    currentFilteredOrders.forEach(order => {
+        if (order.items) {
+            order.items.forEach(item => {
+                const cost = (item.buyPrice || 0) * (item.qty || 1);
+                const sales = item.totalPrice || 0;
+                const profit = sales - cost;
+                csv += `${getDateKey(order.date)},${item.name || ''},${item.category || ''},${item.qty || 1},${cost.toFixed(2)},${sales.toFixed(2)},${profit.toFixed(2)}\n`;
+            });
+        }
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `report_${new Date().toISOString().substring(0,10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+}
+
+// ===== Enter key support =====
+document.getElementById('newCatInput')?.addEventListener('keypress', e => { if (e.key === 'Enter') addCategory(); });
+document.getElementById('mItem')?.addEventListener('keypress', e => { if (e.key === 'Enter') document.getElementById('mQty').focus(); });
+document.getElementById('mQty')?.addEventListener('keypress', e => { if (e.key === 'Enter') addToMarketList(); });
+</script>
+</body>
+</html>
